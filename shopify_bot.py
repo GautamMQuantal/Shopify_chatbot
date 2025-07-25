@@ -1,5 +1,3 @@
-#Currently working the best
-
 import os
 import streamlit as st
 import requests
@@ -36,7 +34,7 @@ def extract_product_intent(query):
     prompt = f"""
 From the query below, extract:
 1. product_name_or_sku (string) - can be SKU, part number, P/N, or product title keywords
-2. requested_info (list of fields like price, cost, inventory, dimensions, profit, margin)
+2. requested_info (list of fields like price, cost, inventory, dimensions, profit, margin, markup)
 
 Note: SKU can also be referred to as "part number" or "P/N"
 
@@ -275,6 +273,23 @@ def calculate_profit_and_margin(cost, price):
         }
     except (ValueError, TypeError, ZeroDivisionError):
         return {"profit": "N/A", "margin": "N/A"}
+
+
+def calculate_markup(cost, price):
+    """Calculate markup from cost and price (Price / Cost)"""
+    try:
+        cost_float = float(cost) if cost and cost != "N/A" else 0
+        price_float = float(price) if price and price != "N/A" else 0
+        
+        if cost_float == 0:
+            return {"markup": "N/A"}
+        
+        markup = price_float / cost_float
+        
+        return {"markup": f"{markup:.2f}"}
+    except (ValueError, TypeError, ZeroDivisionError):
+        return {"markup": "N/A"}
+
 
 
 # Clarify which variant and what info
@@ -549,7 +564,9 @@ Field definitions:
 - 'cost' = internal cost from inventory item  
 - 'profit' = calculated profit (price - cost)
 - 'margin' = calculated margin percentage ((profit/price) * 100)
+- 'markup' = calculated markup (price / cost)
 - 'inventory' = stock quantity
+- 'dimensions' = product dimensions in order: length, width, height
 - 'image_url' = main product image URL
 
 Respond using only: {info_str}. 
@@ -582,6 +599,7 @@ def generate_comparison_response(user_query, product1_data, product2_data, reque
         'cost': ['cost', 'unit cost', 'internal cost', 'costs'],
         'profit': ['profit', 'profitability', 'profits'],
         'margin': ['margin', 'profit margin', 'percentage', 'margins'],
+        'markup': ['markup', 'mark up', 'mark-up', 'markups'],
         'inventory': ['inventory', 'stock', 'quantity', 'quantities'],
         'dimensions': ['dimensions', 'dimension', 'exterior dimensions', 'size', 'measurements']
     }
@@ -619,6 +637,8 @@ def generate_comparison_response(user_query, product1_data, product2_data, reque
                 return product_data.get('profit', 'N/A')
             elif field == 'margin':
                 return product_data.get('margin', 'N/A')
+            elif field == 'markup':
+                return product_data.get('markup', 'N/A')
             elif field == 'inventory':
                 return product_data.get('variant', {}).get('inventoryQuantity', 'N/A')
             elif field == 'dimensions': 
@@ -894,6 +914,7 @@ def process_single_product(product_name_or_sku, requested_info, user_input):
             # Calculate profit and margin
             price = variant.get("price", "N/A")
             profit_margin_data = calculate_profit_and_margin(cost, price)
+            markup_data = calculate_markup(cost, price)
             
             images = product_info.get("images", {}).get("edges", [])
             image_url = images[0]["node"]["url"] if images else "N/A"
@@ -905,6 +926,7 @@ def process_single_product(product_name_or_sku, requested_info, user_input):
                 "cost": cost,
                 "profit": profit_margin_data["profit"],
                 "margin": profit_margin_data["margin"],
+                "markup": markup_data["markup"],
                 "image_url": image_url
             }
 
@@ -959,13 +981,15 @@ def process_comparison(product1_name, product2_name, requested_info, user_input)
         # Calculate profit and margin
         price = variant.get("price", "N/A")
         profit_margin_data = calculate_profit_and_margin(cost, price)
+        markup_data = calculate_markup(cost, price)
         
         return {
             "title": product_info.get("title"),
             "variant": variant,
             "cost": cost,
             "profit": profit_margin_data["profit"],
-            "margin": profit_margin_data["margin"]
+            "margin": profit_margin_data["margin"],
+            "markup": markup_data["markup"]
         }
 
     # Get financial data for both products
