@@ -1,4 +1,4 @@
-#Currently Testing
+#Currently Testing(working Good) - Deploying 8th Aug 2025
 
 import os
 import streamlit as st
@@ -25,11 +25,17 @@ headers = {
 # Session state setup
 for key in [
     "conversation", "awaiting_clarification", "clarification_type",
-    "clarification_data", "original_query", "original_product", "clarified_variant", "original_requested_info"
+    "clarification_data", "original_query", "original_product", "clarified_variant", "original_requested_info","current_product_memory", "current_product_data"
 ]:
-    if key not in st.session_state:
-        st.session_state[key] = [] if "conversation" in key or "clarification_data" in key else False if "awaiting" in key else ""
-
+     if key not in st.session_state:
+        if "conversation" in key or "clarification_data" in key:
+            st.session_state[key] = []
+        elif "awaiting" in key:
+            st.session_state[key] = False
+        elif key in ["current_product_memory", "current_product_data"]:  # NEW
+            st.session_state[key] = None  # NEW: Initialize memory as None
+        else:
+            st.session_state[key] = ""
 
 # NEW: Check if input is product-related
 def is_product_related_query(query):
@@ -115,6 +121,135 @@ def generate_general_response(query):
     
     # Default response for unclear queries
     return "I'm here to help you with product information! You can ask me about:\n• Product prices, costs, and inventory\n• Profit and margin calculations\n• Product comparisons\n• Finding products by category or status\n\nWhat product would you like to know about?"
+
+# NEW: Check if input is asking for details about the current product
+def is_asking_about_current_product(query):
+    """Check if the query is asking for more details about the currently remembered product"""
+    
+    query_lower = query.lower().strip()
+    
+    # Keywords that indicate asking for product details without specifying a product
+    current_product_indicators = [
+        # Pronouns referring to current product
+        r'\bit\b', r'\bthis\b', r'\bthat\b', r'\bthe product\b',
+        
+        # Questions about product attributes without product name - ENHANCED
+        r'^what is the (price|cost|profit|margin|markup|inventory|dimensions?|map|MAP|url|image)',
+        r'^what\'s the (price|cost|profit|margin|markup|inventory|dimensions?|map|MAP|url|image)',
+        r'^tell me the (price|cost|profit|margin|markup|inventory|dimensions?|map|MAP|url|image)',
+        r'^show me the (price|cost|profit|margin|markup|inventory|dimensions?|map|MAP|url|image)',
+        r'^give me the (price|cost|profit|margin|markup|inventory|dimensions?|map|MAP|url|image)',
+        r'^provide me the (price|cost|profit|margin|markup|inventory|dimensions?|map|MAP|url|image)',
+        
+        # Direct attribute questions - ENHANCED
+        r'^(price|cost|profit|margin|markup|inventory|dimensions?|map|MAP)$',
+        r'^(price|cost|profit|margin|markup|inventory|dimensions?|map|MAP) of (it|this|that)$',
+        r'^how much (does it cost|is it|is the price)',
+        r'^what does it cost',
+        
+        # Image/URL specific patterns - NEW
+        r'url image', r'image url', r'url of.*image', r'image.*url',
+        r'^url$', r'^image$', r'^picture$', r'^photo$',
+        
+        # Selling/selling price questions
+        r'sell price', r'selling price', r'sale price', r'advertised price', r'retail price',
+        
+        # More details requests
+        r'more details', r'other details', r'additional info', r'more info',
+        
+        # Generic attribute requests without "the" - NEW
+        r'^(what|whats|tell me|show me|give me|provide me) (price|cost|profit|margin|markup|inventory|dimensions?|map|url|image)',
+    ]
+    
+    # Check if any pattern matches
+    for pattern in current_product_indicators:
+        if re.search(pattern, query_lower):
+            return True
+    
+    return False
+
+
+# NEW: Extract information request from current product query
+def extract_current_product_info_request(query):
+    """Extract what information the user wants about the current product"""
+    
+    query_lower = query.lower()
+    
+    # Map query patterns to requested info - ENHANCED
+    info_mapping = {
+        'price': ['price', 'sell price', 'selling price', 'sale price', 'cost to customer', 'map', 'MAP', 'advertised price', 'retail price'],
+        'cost': ['cost', 'unit cost', 'internal cost', 'how much does it cost'],
+        'profit': ['profit', 'profitability'],
+        'margin': ['margin', 'profit margin', 'percentage margin'],
+        'markup': ['markup', 'mark up', 'mark-up'],
+        'inventory': ['inventory', 'stock', 'quantity', 'how many'],
+        'dimensions': ['dimensions', 'dimension', 'size', 'measurements'], 
+        'image_url': ['image', 'picture', 'photo', 'show me', 'url image', 'image url', 'url of image', 'image of url', 'url'] 
+    }
+    
+    requested_info = []
+    
+    # Check for specific information requests
+    for info_type, keywords in info_mapping.items():
+        if any(keyword in query_lower for keyword in keywords):
+            requested_info.append(info_type)
+    
+    # Additional specific checks for tricky patterns - NEW
+    if any(pattern in query_lower for pattern in ['url image', 'image url', 'provide me the url', 'what is the url']):
+        if 'image_url' not in requested_info:
+            requested_info.append('image_url')
+    
+    # Default to general info if nothing specific found
+    if not requested_info:
+        if any(word in query_lower for word in ['details', 'info', 'information', 'tell me', 'show me']):
+            requested_info = ['price', 'cost', 'inventory', 'profit', 'margin']
+        else:
+            requested_info = ['price']  # Default to price for simple queries
+    
+    return requested_info
+
+
+# NEW: Store product in memory
+def store_product_in_memory(product_title, product_data):
+    """Store the current product and its data in session memory"""
+    st.session_state.current_product_memory = product_title
+    st.session_state.current_product_data = product_data
+
+
+# NEW: Clear product memory
+def clear_product_memory():
+    """Clear the current product memory"""
+    st.session_state.current_product_memory = None
+    st.session_state.current_product_data = None
+
+
+# NEW: Check if a new product is being requested
+def is_new_product_request(query):
+    """Check if the user is asking about a new/different product"""
+    
+    # If no current product in memory, any product query is new
+    if not st.session_state.current_product_memory:
+        return True
+    
+    current_product = st.session_state.current_product_memory.lower()
+    query_lower = query.lower()
+    
+    # Extract potential product names/SKUs from the query
+    intent = extract_product_intent(query)
+    if intent and intent.get("product_name_or_sku"):
+        requested_product = intent["product_name_or_sku"].lower()
+        
+        # Check if the requested product is different from current
+        if requested_product not in current_product and current_product not in requested_product:
+            return True
+    
+    # Check for comparison queries (always considered new request)
+    comparison_intent = extract_comparison_intent(query)
+    if comparison_intent and comparison_intent.get("is_comparison", False):
+        return True
+    
+    return False
+
 
 
 # Extract product intent
@@ -974,7 +1109,7 @@ def process_date_query(intent, user_input):
         return f"Products created {date_condition} {date_value}:\n" + "\n".join(product_list)
 
 
-# UPDATED: Process single product with inventory item data
+# UPDATED: Process single product with memory storage
 def process_single_product(product_name_or_sku, requested_info, user_input):
     results = search_products(product_name_or_sku)
     products = results.get("data", {}).get("products", {}).get("edges", [])
@@ -1033,6 +1168,9 @@ def process_single_product(product_name_or_sku, requested_info, user_input):
                 "markup": markup_data["markup"],
                 "image_url": image_url
             }
+
+            # NEW: Store product in memory
+            store_product_in_memory(product_info.get("title"), enhanced_product_data)
 
             answer = generate_ai_response(user_input, enhanced_product_data, requested_info)
             return answer
@@ -1114,7 +1252,7 @@ def handle_pelican_clarification(user_input, products):
         - Red/Red color = RED
 
         Interior options:
-        - No Foam/Empty/Without foam = NF
+        - No Foam/Empty/Without foam = NFc
         - Foam/With foam = F
         - Dividers/With dividers = DIV
         - Padded/Padded dividers = PD
@@ -1280,8 +1418,26 @@ def handle_user_input(user_input):
             )
             return answer
 
+
 def handle_user_input_with_pelican_support(user_input):
-    """Enhanced input handler with generic color/interior clarification support for all products"""
+    """Enhanced input handler with product memory and generic color/interior clarification support"""
+
+    # NEW: Check if user is asking about the current product in memory
+    if (st.session_state.current_product_memory and 
+        st.session_state.current_product_data and
+        not st.session_state.awaiting_clarification):
+        
+        # Check if this is a new product request
+        if is_new_product_request(user_input):
+            # Clear memory and proceed with new product
+            clear_product_memory()
+        elif is_asking_about_current_product(user_input):
+            # User is asking for more details about the current product
+            requested_info = extract_current_product_info_request(user_input)
+            current_data = st.session_state.current_product_data
+            
+            answer = generate_ai_response(user_input, current_data, requested_info)
+            return answer
 
     # If awaiting color/interior specification for any product
     if (st.session_state.awaiting_clarification and
@@ -1290,12 +1446,9 @@ def handle_user_input_with_pelican_support(user_input):
         products = st.session_state.clarification_data
         clarification_result = handle_color_interior_clarification(user_input, products)
 
-        # ✅ Hard validation: prevent GPT from guessing unrelated colors
-        # Trust GPT's matching if confidence is high
         matched_title = clarification_result.get("matched_product_title", "")
         confidence = clarification_result.get("confidence", "")
 
-        # ✅ Proceed only if confirmed match after manual check
         if clarification_result["matched_product_title"] and clarification_result["confidence"] == 'high':
             matched_product = next(
                 (p for p in products if p["node"]["title"] == clarification_result["matched_product_title"]),
@@ -1353,6 +1506,9 @@ def handle_user_input_with_pelican_support(user_input):
                             "image_url": image_url
                         }
 
+                        # NEW: Store product in memory
+                        store_product_in_memory(product_info.get("title"), enhanced_product_data)
+
                         original_query = st.session_state.original_query
                         original_requested_info = st.session_state.original_requested_info
 
@@ -1399,6 +1555,9 @@ def handle_user_input_with_pelican_support(user_input):
                     "image_url": image_url
                 }
 
+                # NEW: Store product in memory
+                store_product_in_memory(product_info.get("title"), enhanced_product_data)
+
                 original_query = st.session_state.original_query
                 original_requested_info = st.session_state.original_requested_info
 
@@ -1413,7 +1572,7 @@ def handle_user_input_with_pelican_support(user_input):
 
                 return answer
 
-        # ❌ No match or low confidence
+        # No match or low confidence
         st.session_state.awaiting_clarification = False
         st.session_state.clarification_type = ""
         st.session_state.clarification_data = []
@@ -1433,7 +1592,7 @@ def handle_user_input_with_pelican_support(user_input):
         # Reuse the existing clarification function
         clarification_result = handle_color_interior_clarification(user_input, variant_products)
 
-        matched_title = clarification_result.get("matched_product_title", "")  # Note: still called "matched_product_title"
+        matched_title = clarification_result.get("matched_product_title", "")
         confidence = clarification_result.get("confidence", "")
 
         if matched_title and confidence == 'high':
@@ -1479,6 +1638,9 @@ def handle_user_input_with_pelican_support(user_input):
                 "image_url": image_url
             }
 
+            # NEW: Store product in memory
+            store_product_in_memory(product.get("title"), enhanced_product_data)
+
             original_query = st.session_state.original_query
             original_requested_info = st.session_state.original_requested_info
 
@@ -1506,10 +1668,8 @@ def handle_user_input_with_pelican_support(user_input):
     if not is_product_related_query(user_input):
         return generate_general_response(user_input)
 
-
     # If not awaiting clarification, proceed with normal flow
     return handle_user_input(user_input)
-
 
 
 
