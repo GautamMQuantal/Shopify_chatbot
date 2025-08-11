@@ -1,4 +1,4 @@
-#Currently Testing(working Good) - Deploying 8th Aug 2025
+#Currently Testing(Working best)
 
 import os
 import streamlit as st
@@ -184,7 +184,8 @@ def extract_current_product_info_request(query):
         'markup': ['markup', 'mark up', 'mark-up'],
         'inventory': ['inventory', 'stock', 'quantity', 'how many'],
         'dimensions': ['dimensions', 'dimension', 'size', 'measurements'], 
-        'image_url': ['image', 'picture', 'photo', 'show me', 'url image', 'image url', 'url of image', 'image of url', 'url'] 
+        'image_url': ['image', 'picture', 'photo', 'show me', 'url image', 'image url', 'url of image', 'image of url', 'url'],
+        'cost_update': ['cost updated', 'cost last updated', 'last cost update', 'when cost updated', 'cost update time']
     }
     
     requested_info = []
@@ -459,6 +460,46 @@ Respond as JSON:
         return None
     
 
+def extract_cost_update_intent(query):
+    """Simple function to check if the query is asking about cost updates"""
+    query_lower = query.lower().strip()
+    
+    # Simple approach: check if query contains "cost" AND any update-related word
+    cost_keywords = ['cost', 'costs']
+    update_keywords = ['updated', 'changed', 'modified', 'update', 'change', 'modification']
+    
+    # Check if query contains cost keyword AND any update keyword
+    has_cost = any(keyword in query_lower for keyword in cost_keywords)
+    has_update = any(keyword in query_lower for keyword in update_keywords)
+    
+    return has_cost and has_update
+
+def extract_cost_update_product_name(query):
+    """Simple function to extract product name from cost update query"""
+    query_lower = query.lower()
+    
+    # Remove common cost update related words to isolate product name
+    remove_words = ['cost', 'costs', 'updated', 'changed', 'modified', 'update', 'change', 'modification', 
+                   'when', 'was', 'the', 'last', 'of', 'for', 'time', 'date', 'product', 'item']
+    
+    # Split query and remove update-related words
+    words = query.split()
+    product_words = []
+    
+    for word in words:
+        word_clean = word.lower().strip('.,!?')
+        if word_clean not in remove_words and len(word_clean) > 1:
+            product_words.append(word)
+    
+    if product_words:
+        product_name = ' '.join(product_words).strip()
+        # Remove quotes if present
+        product_name = product_name.strip('"\'')
+        return product_name if product_name else None
+    
+    return None
+
+
 # NEW: Fetch inventory item details for cost, profit, and margin
 def fetch_inventory_item_details(inventory_item_id):
     """Fetch cost, profit, and margin from inventory item"""
@@ -484,6 +525,45 @@ def fetch_inventory_item_details(inventory_item_id):
     
     result = response.json()
     return result.get("data", {}).get("inventoryItem", {})
+
+def get_inventory_item_cost_update_time(inventory_item_id):
+    """
+    Fetch the cost update timestamp from inventory item
+    Note: Shopify doesn't track cost-specific update times, so we get the general update time
+    """
+    query = f"""
+    {{
+      inventoryItem(id: "{inventory_item_id}") {{
+        id
+        updatedAt
+        unitCost {{
+          amount
+          currencyCode
+        }}
+        tracked
+        sku
+      }}
+    }}
+    """
+    
+    try:
+        response = requests.post(
+            f"https://{SHOPIFY_STORE_URL}/admin/api/2023-07/graphql.json",
+            headers=headers,
+            json={"query": query}
+        )
+        
+        result = response.json()
+        inventory_item = result.get("data", {}).get("inventoryItem", {})
+        
+        return {
+            "updated_at": inventory_item.get("updatedAt", "N/A"),
+            "cost": inventory_item.get("unitCost", {}).get("amount", "N/A") if inventory_item.get("unitCost") else "N/A",
+            "currency": inventory_item.get("unitCost", {}).get("currencyCode", "USD") if inventory_item.get("unitCost") else "USD"
+        }
+    except Exception as e:
+        print(f"Error fetching inventory item details: {e}")
+        return {"updated_at": "N/A", "cost": "N/A", "currency": "USD"}
 
 
 # NEW: Calculate profit and margin
@@ -523,6 +603,125 @@ def calculate_markup(cost, price):
         return {"markup": "N/A"}
 
 
+def process_cost_update_query(query, product_name_or_sku=None):
+    """Enhanced function to process cost update timestamp queries"""
+    
+    # If no product specified, check if we have a current product in memory
+    if not product_name_or_sku and st.session_state.current_product_memory:
+        # User is asking about current product
+        current_data = st.session_state.current_product_data
+        if current_data and 'title' in current_data:
+            # Get the variant data to access inventory item ID
+            variant_data = current_data.get('variant', {})
+            inventory_item = variant_data.get('inventoryItem', {})
+            inventory_item_id = inventory_item.get('id')
+            
+            if inventory_item_id:
+                # Get cost update information from inventory item
+                cost_update_info = get_inventory_item_cost_update_time(inventory_item_id)
+                updated_at = cost_update_info.get("updated_at", "N/A")
+                current_cost = cost_update_info.get("cost", "N/A")
+                currency = cost_update_info.get("currency", "USD")
+                
+                product_title = current_data.get('title', 'Current Product')
+                
+                if updated_at != "N/A":
+                    # Format the timestamp to be more readable
+                    try:
+                        from datetime import datetime
+                        dt = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
+                        formatted_date = dt.strftime("%B %d, %Y at %I:%M %p UTC")
+                        
+                        cost_display = f"${current_cost}" if current_cost != "N/A" else "unavailable"
+                        
+                        return f"The cost information for '{product_title}' was last updated on {formatted_date}. Current cost: {cost_display}. Note: This reflects the inventory item's last modification time."
+                    except:
+                        cost_display = f"${current_cost}" if current_cost != "N/A" else "unavailable"
+                        return f"The cost information for '{product_title}' was last updated at {updated_at}. Current cost: {cost_display}."
+                else:
+                    return f"Cost update information is not available for '{product_title}'."
+            else:
+                # Fallback to product-level update time
+                return f"Detailed cost update information is not available for '{current_data.get('title', 'current product')}'. The product may not have inventory tracking enabled."
+        else:
+            return "No current product in memory to check cost update information."
+    
+    # If product name is specified, search for it
+    elif product_name_or_sku:
+        results = search_products(product_name_or_sku)
+        products = results.get("data", {}).get("products", {}).get("edges", [])
+        
+        if not products:
+            return f"No product found matching '{product_name_or_sku}' to check cost update information."
+        elif len(products) > 1:
+            # Multiple products found - ask for clarification
+            st.session_state.awaiting_clarification = True
+            st.session_state.clarification_type = "cost_update_product_selection"
+            st.session_state.clarification_data = products
+            st.session_state.original_query = query
+            
+            product_list = []
+            for i, product in enumerate(products[:5]):  # Show first 5
+                product_list.append(f"• {product['node']['title']}")
+            
+            return f"I found multiple products matching your search:\n" + "\n".join(product_list) + "\n\nCould you please specify which product you're asking about?"
+        else:
+            # Single product found
+            product = products[0]["node"]
+            gid = product["id"]
+            details = fetch_product_details_by_gid(gid)
+            product_info = details["data"]["product"]
+            
+            # Get the first variant to access inventory item
+            variants = product_info.get("variants", {}).get("edges", [])
+            if variants:
+                variant = variants[0]["node"]
+                inventory_item = variant.get("inventoryItem", {})
+                inventory_item_id = inventory_item.get("id")
+                
+                if inventory_item_id:
+                    # Get cost update information from inventory item
+                    cost_update_info = get_inventory_item_cost_update_time(inventory_item_id)
+                    updated_at = cost_update_info.get("updated_at", "N/A")
+                    current_cost = cost_update_info.get("cost", "N/A")
+                    currency = cost_update_info.get("currency", "USD")
+                    
+                    product_title = product_info.get("title", "Unknown Product")
+                    
+                    if updated_at != "N/A":
+                        try:
+                            from datetime import datetime
+                            dt = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
+                            formatted_date = dt.strftime("%B %d, %Y at %I:%M %p UTC")
+                            
+                            cost_display = f"${current_cost}" if current_cost != "N/A" else "unavailable"
+                            
+                            return f"The cost information for '{product_title}' was last updated on {formatted_date}. Current cost: {cost_display}. Note: This reflects the inventory item's last modification time."
+                        except:
+                            cost_display = f"${current_cost}" if current_cost != "N/A" else "unavailable"
+                            return f"The cost information for '{product_title}' was last updated at {updated_at}. Current cost: {cost_display}."
+                    else:
+                        return f"Cost update information is not available for '{product_title}'."
+                else:
+                    # Fallback to product-level update time
+                    product_updated_at = product_info.get("updatedAt", "N/A")
+                    product_title = product_info.get("title", "Unknown Product")
+                    
+                    if product_updated_at != "N/A":
+                        try:
+                            from datetime import datetime
+                            dt = datetime.fromisoformat(product_updated_at.replace('Z', '+00:00'))
+                            formatted_date = dt.strftime("%B %d, %Y at %I:%M %p UTC")
+                            return f"'{product_title}' was last updated on {formatted_date}. Note: Specific cost update tracking is not available for this product."
+                        except:
+                            return f"'{product_title}' was last updated at {product_updated_at}. Note: Specific cost update tracking is not available."
+                    else:
+                        return f"Update information is not available for '{product_title}'."
+            else:
+                return f"No variant information available for '{product_info.get('title', 'the product')}' to check cost updates."
+    
+    else:
+        return "Please specify which product you'd like to check the cost update information for."
 
 # Clarify which variant and what info
 def extract_variant_intent(user_input, variants):
@@ -1309,9 +1508,6 @@ def process_comparison(product1_name, product2_name, requested_info, user_input)
     product1 = products1[0]["node"]
     product2 = products2[0]["node"]
     
-    # print(f"Product1: {product1['title']}")  # Debug print
-    # print(f"Product2: {product2['title']}")  # Debug print
-    
     # Fetch details for both products
     details1 = fetch_product_details_by_gid(product1["id"])
     details2 = fetch_product_details_by_gid(product2["id"])
@@ -1422,6 +1618,12 @@ def handle_user_input(user_input):
 def handle_user_input_with_pelican_support(user_input):
     """Enhanced input handler with product memory and generic color/interior clarification support"""
 
+    if extract_cost_update_intent(user_input):
+        # Extract product name from the query
+        product_name = extract_cost_update_product_name(user_input)
+        answer = process_cost_update_query(user_input, product_name)
+        return answer
+
     # NEW: Check if user is asking about the current product in memory
     if (st.session_state.current_product_memory and 
         st.session_state.current_product_data and
@@ -1438,6 +1640,13 @@ def handle_user_input_with_pelican_support(user_input):
             
             answer = generate_ai_response(user_input, current_data, requested_info)
             return answer
+
+    if extract_cost_update_intent(user_input):
+        # Check if asking about current product or specific product
+        product_name = extract_cost_update_product_name(user_input)
+        answer = process_cost_update_query(user_input, product_name)
+        return answer
+
 
     # If awaiting color/interior specification for any product
     if (st.session_state.awaiting_clarification and
@@ -1664,13 +1873,59 @@ def handle_user_input_with_pelican_support(user_input):
         st.session_state.original_requested_info = []
         st.session_state.original_product = None
         return "Variant with the specified color and interior combination is unavailable."
+    
+    # If awaiting product selection for cost update query
+    if (st.session_state.awaiting_clarification and
+        st.session_state.clarification_type == "cost_update_product_selection"):
+        
+        products = st.session_state.clarification_data
+        clarification_result = handle_color_interior_clarification(user_input, products)
+        
+        if clarification_result.get("matched_product_title") and clarification_result.get("confidence") == 'high':
+            matched_product = next(
+                (p for p in products if p["node"]["title"] == clarification_result["matched_product_title"]),
+                None
+            )
+            
+            if matched_product:
+                gid = matched_product["node"]["id"]
+                details = fetch_product_details_by_gid(gid)
+                product_info = details["data"]["product"]
+                
+                updated_at = product_info.get("updatedAt", "N/A")
+                product_title = product_info.get("title", "Unknown Product")
+                
+                if updated_at != "N/A":
+                    try:
+                        from datetime import datetime
+                        dt = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
+                        formatted_date = dt.strftime("%B %d, %Y at %I:%M %p UTC")
+                        answer = f"The product '{product_title}' was last updated on {formatted_date}. Note: Shopify tracks product updates, not specifically cost updates."
+                    except:
+                        answer = f"The product '{product_title}' was last updated at {updated_at}. Note: Shopify tracks product updates, not specifically cost updates."
+                else:
+                    answer = f"Update information is not available for '{product_title}'."
+                
+                # Reset clarification state
+                st.session_state.awaiting_clarification = False
+                st.session_state.clarification_type = ""
+                st.session_state.clarification_data = []
+                st.session_state.original_query = ""
+                
+                return answer
+        
+        # No match found
+        st.session_state.awaiting_clarification = False
+        st.session_state.clarification_type = ""
+        st.session_state.clarification_data = []
+        st.session_state.original_query = ""
+        return "Could not find the specified product to check cost update information."
 
     if not is_product_related_query(user_input):
         return generate_general_response(user_input)
 
     # If not awaiting clarification, proceed with normal flow
     return handle_user_input(user_input)
-
 
 
 # Streamlit UI
