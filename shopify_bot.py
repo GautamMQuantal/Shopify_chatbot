@@ -1,4 +1,4 @@
-#Currently Testing(Working best)
+#Currently Deployed - 12th August 2025
 
 import os
 import streamlit as st
@@ -464,23 +464,46 @@ def extract_cost_update_intent(query):
     """Simple function to check if the query is asking about cost updates"""
     query_lower = query.lower().strip()
     
-    # Simple approach: check if query contains "cost" AND any update-related word
-    cost_keywords = ['cost', 'costs']
-    update_keywords = ['updated', 'changed', 'modified', 'update', 'change', 'modification']
+    # More specific patterns for cost update queries
+    cost_update_patterns = [
+        r'cost.*updated',
+        r'cost.*changed',
+        r'cost.*modified',
+        r'updated.*cost',
+        r'changed.*cost',
+        r'modified.*cost',
+        r'when.*cost.*updated',
+        r'when.*updated.*cost',
+        r'last.*cost.*update',
+        r'cost.*last.*updated'
+    ]
     
-    # Check if query contains cost keyword AND any update keyword
-    has_cost = any(keyword in query_lower for keyword in cost_keywords)
-    has_update = any(keyword in query_lower for keyword in update_keywords)
-    
-    return has_cost and has_update
+    # Check if query matches any cost update pattern
+    return any(re.search(pattern, query_lower) for pattern in cost_update_patterns)
 
 def extract_cost_update_product_name(query):
     """Simple function to extract product name from cost update query"""
     query_lower = query.lower()
     
+    # Check if this is a general cost update query (no specific product mentioned)
+    general_patterns = [
+        r'^when was.*cost.*updated',
+        r'^when was.*last.*cost',
+        r'^when.*last.*cost.*updated',
+        r'^when.*cost.*last.*updated',
+        r'when was the last time.*cost.*updated',
+        r'when did.*cost.*get updated'
+    ]
+    
+    # If it matches a general pattern, return None (asking about current product)
+    for pattern in general_patterns:
+        if re.search(pattern, query_lower):
+            return None
+    
     # Remove common cost update related words to isolate product name
     remove_words = ['cost', 'costs', 'updated', 'changed', 'modified', 'update', 'change', 'modification', 
-                   'when', 'was', 'the', 'last', 'of', 'for', 'time', 'date', 'product', 'item']
+                   'when', 'was', 'the', 'last', 'of', 'for', 'time', 'date', 'product', 'item',
+                   'we', 'had', 'did', 'get', 'have']  # Added more stop words
     
     # Split query and remove update-related words
     words = query.split()
@@ -1621,8 +1644,19 @@ def handle_user_input_with_pelican_support(user_input):
     if extract_cost_update_intent(user_input):
         # Extract product name from the query
         product_name = extract_cost_update_product_name(user_input)
-        answer = process_cost_update_query(user_input, product_name)
-        return answer
+        
+        # If no specific product name found, check if we have current product in memory
+        if not product_name and st.session_state.current_product_memory:
+            # User is asking about current product's cost update
+            answer = process_cost_update_query(user_input, None)
+            return answer
+        elif product_name:
+            # User specified a product
+            answer = process_cost_update_query(user_input, product_name)
+            return answer
+        else:
+            # No product specified and no current product in memory
+            return "Please specify which product you'd like to check the cost update information for, or ask about a specific product first."
 
     # NEW: Check if user is asking about the current product in memory
     if (st.session_state.current_product_memory and 
@@ -2003,7 +2037,6 @@ if user_input:
         st.session_state.original_product = None
 
     
-
 # Display chat
 for role, message in st.session_state.conversation:
     if role == "bot":
