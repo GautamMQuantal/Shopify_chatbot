@@ -1818,9 +1818,12 @@ def handle_user_input_with_pelican_support(user_input):
     
     count_patterns = [
         r'how many products',
+        r'how many product',
         r'total products',
         r'count.*products',
+        r'count.*product',
         r'number.*products',
+        r'number.*product',
         r'products.*count',
         r'products.*total',
         r'product.*total',
