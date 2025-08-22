@@ -1,4 +1,4 @@
-#Currently Deployed - 12th August 2025
+#Currently working - Improved Good Deployed 22nd August 2025
 
 import os
 import streamlit as st
@@ -63,7 +63,9 @@ def is_product_related_query(query):
         'price', 'cost', 'inventory', 'stock', 'dimensions', 'profit', 'margin', 'markup',
         'product', 'item', 'sku', 'part number', 'p/n', 'compare', 'vs', 'versus',
         'show me', 'tell me about', 'find', 'search', 'looking for',
-        'how much', 'what is the', 'give me', 'i need', 'i want'
+        'how much', 'what is the', 'give me', 'i need', 'i want',
+        'weight', 'wheels', 'total products', 'how many products', 'count',
+        'part', 'number', 'model', 'formula'
     ]
     
     # Status/category related keywords
@@ -133,21 +135,18 @@ def is_asking_about_current_product(query):
         # Pronouns referring to current product
         r'\bit\b', r'\bthis\b', r'\bthat\b', r'\bthe product\b',
         
-        # Questions about product attributes without product name - ENHANCED
-        r'^what is the (price|cost|profit|margin|markup|inventory|dimensions?|map|MAP|url|image)',
-        r'^what\'s the (price|cost|profit|margin|markup|inventory|dimensions?|map|MAP|url|image)',
-        r'^tell me the (price|cost|profit|margin|markup|inventory|dimensions?|map|MAP|url|image)',
-        r'^show me the (price|cost|profit|margin|markup|inventory|dimensions?|map|MAP|url|image)',
-        r'^give me the (price|cost|profit|margin|markup|inventory|dimensions?|map|MAP|url|image)',
-        r'^provide me the (price|cost|profit|margin|markup|inventory|dimensions?|map|MAP|url|image)',
+        # Direct questions about product attributes - ENHANCED
+        r'\bwhat\s+is\s+the\s+(price|cost|profit|margin|markup|inventory|dimensions?|weight|part\s+number|sku)\b',
+        r'\bwhat\s+(price|cost|profit|margin|markup|inventory|dimensions?|weight|part\s+number|sku)\b',
+        r'\b(price|cost|profit|margin|markup|inventory|dimensions?|weight|part\s+number|sku)\s*\?\s*$',
+        r'^\s*(price|cost|profit|margin|markup|inventory|dimensions?|weight|part\s+number|sku)\s*$',
         
-        # Direct attribute questions - ENHANCED
-        r'^(price|cost|profit|margin|markup|inventory|dimensions?|map|MAP)$',
-        r'^(price|cost|profit|margin|markup|inventory|dimensions?|map|MAP) of (it|this|that)$',
-        r'^how much (does it cost|is it|is the price)',
-        r'^what does it cost',
+        # More flexible question patterns - ENHANCED
+        r'\b(what|whats|tell|show|give|provide).*\b(price|cost|profit|margin|markup|inventory|dimensions?|map|MAP|url|image|weight|part\s+number|sku)\b',
+        r'\bhow much\b',
+        r'\bwhat does it cost\b',
         
-        # Image/URL specific patterns - NEW
+        # Image/URL specific patterns
         r'url image', r'image url', r'url of.*image', r'image.*url',
         r'^url$', r'^image$', r'^picture$', r'^photo$',
         
@@ -156,9 +155,6 @@ def is_asking_about_current_product(query):
         
         # More details requests
         r'more details', r'other details', r'additional info', r'more info',
-        
-        # Generic attribute requests without "the" - NEW
-        r'^(what|whats|tell me|show me|give me|provide me) (price|cost|profit|margin|markup|inventory|dimensions?|map|url|image)',
     ]
     
     # Check if any pattern matches
@@ -182,23 +178,51 @@ def extract_current_product_info_request(query):
         'profit': ['profit', 'profitability'],
         'margin': ['margin', 'profit margin', 'percentage margin'],
         'markup': ['markup', 'mark up', 'mark-up'],
-        'inventory': ['inventory', 'stock', 'quantity', 'how many'],
+        'inventory': ['inventory', 'stock', 'quantity', 'how many','quantities'],
         'dimensions': ['dimensions', 'dimension', 'size', 'measurements'], 
         'image_url': ['image', 'picture', 'photo', 'show me', 'url image', 'image url', 'url of image', 'image of url', 'url'],
-        'cost_update': ['cost updated', 'cost last updated', 'last cost update', 'when cost updated', 'cost update time']
+        'cost_update': ['cost updated', 'cost last updated', 'last cost update', 'when cost updated', 'cost update time'],
+        'weight': ['weight', 'how heavy', 'mass', 'weighs', 'heavy', 'weigh','weights'],
+        'wheels': ['wheels', 'wheel', 'rolling', 'roll', 'portable', 'wheeled'],
+        'part_number': ['part number', 'p/n', 'sku', 'model number', 'product number', 'item number']
+
     }
     
     requested_info = []
     
     # Check for specific information requests
+    # Check for specific information requests - ENHANCED
     for info_type, keywords in info_mapping.items():
-        if any(keyword in query_lower for keyword in keywords):
+        if any(keyword.lower() in query_lower for keyword in keywords):
             requested_info.append(info_type)
+
+    # Additional keyword-based detection
+    if any(word in query_lower for word in ['price', 'cost', 'profit', 'margin', 'markup', 'inventory', 'dimensions', 'image', 'url']):
+        # Extract based on keywords found
+        if 'price' in query_lower and 'price' not in requested_info:
+            requested_info.append('price')
+        if 'cost' in query_lower and 'cost' not in requested_info:
+            requested_info.append('cost')
+        if 'dimensions' in query_lower and 'dimensions' not in requested_info:
+            requested_info.append('dimensions')
+        if any(word in query_lower for word in ['inventory', 'stock', 'quantity']) and 'inventory' not in requested_info:
+            requested_info.append('inventory')
+        if any(word in query_lower for word in ['image', 'picture', 'photo', 'url']) and 'image_url' not in requested_info:
+            requested_info.append('image_url')
     
     # Additional specific checks for tricky patterns - NEW
     if any(pattern in query_lower for pattern in ['url image', 'image url', 'provide me the url', 'what is the url']):
         if 'image_url' not in requested_info:
             requested_info.append('image_url')
+
+    if re.search(r'\bwhat\s+is\s+the\s+weight\b', query_lower) and 'weight' not in requested_info:
+        requested_info.append('weight')
+    
+    if re.search(r'\bwhat.*part\s+number\b', query_lower) and 'part_number' not in requested_info:
+        requested_info.append('part_number')
+        
+    if re.search(r'\bwhat.*sku\b', query_lower) and 'part_number' not in requested_info:
+        requested_info.append('part_number')
     
     # Default to general info if nothing specific found
     if not requested_info:
@@ -523,6 +547,66 @@ def extract_cost_update_product_name(query):
     return None
 
 
+def extract_weight_from_variant(variant):
+    """Extract weight information from variant with correct GraphQL structure"""
+    try:
+        inventory_item = variant.get("inventoryItem", {})
+        measurement = inventory_item.get("measurement", {})
+        weight_data = measurement.get("weight", {})
+        
+        if weight_data:
+            weight_value = weight_data.get("value")
+            weight_unit = weight_data.get("unit", "")
+            
+            if weight_value is not None and weight_value != 0:
+                return f"{weight_value} {weight_unit}" if weight_unit else f"{weight_value}"
+            else:
+                return "information unavailable"
+        else:
+            return "information unavailable"
+            
+    except (KeyError, TypeError, AttributeError):
+        return "information unavailable"
+
+
+
+def get_total_product_count():
+    """Get total count of products on the site with pagination"""
+    total_count = 0
+    has_next = True
+    cursor = None
+
+    while has_next:
+        query = f"""
+        {{
+          products(first: 250{', after: "' + cursor + '"' if cursor else ''}) {{
+            edges {{
+              cursor
+              node {{ id }}
+            }}
+            pageInfo {{
+              hasNextPage
+              endCursor
+            }}
+          }}
+        }}
+        """
+        response = requests.post(
+            f"https://{SHOPIFY_STORE_URL}/admin/api/2023-07/graphql.json",
+            headers=headers,
+            json={"query": query}
+        )
+        result = response.json()
+        products = result.get("data", {}).get("products", {}).get("edges", [])
+        total_count += len(products)
+        page_info = result.get("data", {}).get("products", {}).get("pageInfo", {})
+        has_next = page_info.get("hasNextPage", False)
+        cursor = page_info.get("endCursor")
+    
+    return f"{total_count} products"
+
+
+
 # NEW: Fetch inventory item details for cost, profit, and margin
 def fetch_inventory_item_details(inventory_item_id):
     """Fetch cost, profit, and margin from inventory item"""
@@ -624,6 +708,32 @@ def calculate_markup(cost, price):
         return {"markup": f"{markup:.2f}"}
     except (ValueError, TypeError, ZeroDivisionError):
         return {"markup": "N/A"}
+
+
+def detect_wheels_in_product(product_info):
+    """Detect if product has wheels based on description and tags"""
+    
+    # Check product description
+    description = product_info.get("description", "").lower()
+    
+    # Check product tags
+    tags = [tag.lower() for tag in product_info.get("tags", [])]
+    
+    # Check product title
+    title = product_info.get("title", "").lower()
+    
+    # Wheel indicators
+    wheel_keywords = [
+        'wheel', 'wheels', 'wheeled', 'rolling', 'rollable', 'portable',
+        'mobility', 'mobile', 'transport', 'trolley', 'cart'
+    ]
+    
+    # Check in all text fields
+    all_text = f"{description} {' '.join(tags)} {title}"
+    
+    has_wheels = any(keyword in all_text for keyword in wheel_keywords)
+    
+    return "Yes" if has_wheels else "No clear indication"
 
 
 def process_cost_update_query(query, product_name_or_sku=None):
@@ -963,6 +1073,12 @@ def fetch_product_details_by_gid(gid):
                   currencyCode
                 }}
                 tracked
+                measurement {{
+                  weight {{
+                    value
+                    unit
+                  }}
+                }}
               }}
             }}
           }}
@@ -978,40 +1094,93 @@ def fetch_product_details_by_gid(gid):
       }}
     }}
     """
+    
     response = requests.post(
         f"https://{SHOPIFY_STORE_URL}/admin/api/2023-07/graphql.json",
         headers=headers,
         json={"query": query}
     )
+
     return response.json()
 
-
-# UPDATED: Generate GPT response with inventory item data
+# UPDATED: Generate GPT response with inventory item data and new fields
 def generate_ai_response(user_query, product_data, requested_info=None):
     info_str = ", ".join(requested_info) if requested_info else "all relevant fields"
     
+    # Extract variant data
+    variant = product_data.get("variant", {})
+    
+    # Extract weight information
+    weight_display = extract_weight_from_variant(variant)
+    
+    # Extract wheels information from product data
+    wheels_info = "information unavailable"
+    if "full_product_info" in product_data:
+        wheels_info = detect_wheels_in_product(product_data["full_product_info"])
+    else:
+        title_text = f"{product_data.get('title', '')} {variant.get('title', '')}".lower()
+        wheel_keywords = ['wheel', 'wheels', 'wheeled', 'rolling', 'portable', 'mobility', 'mobile']
+        if any(keyword in title_text for keyword in wheel_keywords):
+            wheels_info = "Yes"
+        elif title_text.strip():
+            wheels_info = "No clear indication"
+    
+    # Extract part number (SKU)
+    part_number = variant.get('sku', 'information unavailable')
+    
+    # Check if user is asking specifically for margin
+    user_lower = user_query.lower()
+    
+    # NEW: Check if asking about margin specifically
+    is_margin_request = any(word in user_lower for word in ['margin', 'profit margin']) and requested_info and 'margin' in requested_info
+    
+    # Check if user is asking specifically for margin formula
+    margin_formula_patterns = [
+        r'margin.*formula',
+        r'how.*calculate.*margin',
+        r'margin.*calculation',
+        r'formula.*margin',
+        r'calculate.*margin'
+    ]
+    
+    is_margin_formula_request = any(re.search(pattern, user_lower) for pattern in margin_formula_patterns)
+
     prompt = f"""
 User asked: "{user_query}"
 
 Product Data:
 {product_data}
 
+Additional Information:
+- Weight: {weight_display}
+- Has Wheels: {wheels_info}
+- Part Number/SKU: {part_number}
+
+SPECIAL INSTRUCTIONS:
+{"1. MARGIN CALCULATION: The user is asking about margin. Provide the margin value AND show the calculation. Extract the actual price and cost values from the product data and show: 'Margin: X% (calculated as: (($Y - $Z) / $Y) × 100 = X%)' where Y is the price and Z is the cost. The formula should be explicitly included as part of the response if it's a margin request. For example, if the price is $Y and the cost is $Z, the margin should be calculated as follows: 'Margin: X% (calculated as: (($Y - $Z) / $Y) × 100 = X%)'." if is_margin_request else ""}
+
 RESPONSE FORMAT REQUIREMENTS:
 1. For numerical values: Provide exact figures with relevant units:
    - Price/Cost: Include currency symbol (e.g., $25.99)
    - Dimensions: Include units (e.g., 750ml, 12.5cm)
+   - Weight: Include units (e.g., 5.2 kg, 11.5 lbs)
    - Percentages: Include % symbol (e.g., 15.5%)
    - Inventory: Include "units" (e.g., 50 units)
 
 2. For categorical data: Reference exact terms or values from the dataset:
    - Product status: Use exact status (e.g., ACTIVE, DRAFT, ARCHIVED)
    - Categories: Use exact category names from productType or tags
+   - Wheels: Yes/No/No clear indication
+   - Part Number: Exact SKU value
 
 3. Missing Data: If a value is absent in the dataset, clearly state "information unavailable" (not "N/A")
 
 4. Error Handling: If data is missing or unavailable for a requested field, indicate this clearly without making assumptions
 
 5. Stick to what is explicitly provided - avoid assumptions where data is incomplete
+
+6. MARGIN FORMULA: If user asks about margin calculation or formula, provide:
+   "Profit margin is calculated using: Margin % = ((Selling Price - Cost) / Selling Price) × 100"
 
 Field definitions:
 - 'price' = customer-facing selling price from variant
@@ -1021,23 +1190,26 @@ Field definitions:
 - 'markup' = calculated markup (price / cost)
 - 'inventory' = stock quantity
 - 'dimensions' = product dimensions in order: length, width, height
+- 'weight' = product weight with appropriate units
+- 'wheels' = whether the product has wheels for mobility
+- 'part_number' = SKU/part number/model number
 - 'image_url' = main product image URL
 
 Respond using only: {info_str}. 
 
-For missing fields, state "unavailable" clearly.
+For missing fields, state "information unavailable" clearly.
 If 'image_url' is requested, return the direct image URL only once without markdown or formatting.
+If margin formula is requested, include the calculation formula.
 Use factual, precise language with exact values and appropriate units.
 """
     
     response = openai_client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.1,  # Lower temperature for more consistent formatting
-        max_tokens=500
+        temperature=0.1,  
+        max_tokens=600  
     )
     return response.choices[0].message.content.strip()
-
 
 
 # UPDATED: Generate comparison response with inventory item data
@@ -1641,6 +1813,36 @@ def handle_user_input(user_input):
 def handle_user_input_with_pelican_support(user_input):
     """Enhanced input handler with product memory and generic color/interior clarification support"""
 
+    user_input = user_input.rstrip('?').strip()
+    user_lower = user_input.lower()
+    
+    count_patterns = [
+        r'how many products',
+        r'total products',
+        r'count.*products',
+        r'number.*products',
+        r'products.*count',
+        r'products.*total',
+        r'product.*total',
+        r'product.*count',
+    ]
+    
+    if any(re.search(pattern, user_lower) for pattern in count_patterns):
+        count_result = get_total_product_count()
+        return f"We have {count_result} on the site."
+    
+    # Check for margin formula requests
+    margin_formula_patterns = [
+        r'margin.*formula',
+        r'how.*calculate.*margin',
+        r'margin.*calculation',
+        r'formula.*margin',
+        r'calculate.*margin'
+    ]
+    
+    if any(re.search(pattern, user_lower) for pattern in margin_formula_patterns):
+        return "Profit margin is calculated using the formula: **Margin % = ((Selling Price - Cost) / Selling Price) × 100**\n\nFor example, if a product sells for $100 and costs $60:\nMargin % = (($100 - $60) / $100) × 100 = 40%"
+    
     if extract_cost_update_intent(user_input):
         # Extract product name from the query
         product_name = extract_cost_update_product_name(user_input)
