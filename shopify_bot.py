@@ -1,4 +1,4 @@
-#Currently working - Improved Good Deployed 22nd August 2025
+#Currently working OK - Deployed on 25th August 2025
 
 import os
 import streamlit as st
@@ -64,7 +64,7 @@ def is_product_related_query(query):
         'product', 'item', 'sku', 'part number', 'p/n', 'compare', 'vs', 'versus',
         'show me', 'tell me about', 'find', 'search', 'looking for',
         'how much', 'what is the', 'give me', 'i need', 'i want',
-        'weight', 'wheels', 'total products', 'how many products', 'count',
+        'weight', 'wheels', 'total products', 'how many products', 'count', 'product'
         'part', 'number', 'model', 'formula'
     ]
     
@@ -184,7 +184,8 @@ def extract_current_product_info_request(query):
         'cost_update': ['cost updated', 'cost last updated', 'last cost update', 'when cost updated', 'cost update time'],
         'weight': ['weight', 'how heavy', 'mass', 'weighs', 'heavy', 'weigh','weights'],
         'wheels': ['wheels', 'wheel', 'rolling', 'roll', 'portable', 'wheeled'],
-        'part_number': ['part number', 'p/n', 'sku', 'model number', 'product number', 'item number']
+        'part_number': ['part number', 'p/n', 'sku', 'model number', 'product number', 'item number'],
+        'equivalent': ['equivalent', 'compare', 'similar', 'alternative', 'substitute', 'replacement', 'comparable']
 
     }
     
@@ -232,6 +233,228 @@ def extract_current_product_info_request(query):
             requested_info = ['price']  # Default to price for simple queries
     
     return requested_info
+
+
+def is_equivalent_comparison_query(query):
+    """Check if the query is asking for equivalent products based on dimensions"""
+    
+    query_lower = query.lower().strip()
+    
+    # Keywords that indicate equivalent/comparison queries
+    equivalent_patterns = [
+        r'\bequivalent\b', r'\bcompare.*dimensions?\b', r'\bsame.*dimensions?\b',
+        r'\bsimilar.*dimensions?\b', r'\bmatch.*dimensions?\b', r'\bcomparable\b',
+        r'\balternative\b', r'\bsubstitute\b', r'\breplacement\b',
+        r'\bnanuk.*skb.*equivalent\b',
+        r'\binterior.*dimensions?\b.*equivalent\b', r'\bequivalent.*interior\b',
+        r'\bsame.*size\b', r'\bsimilar.*size\b'
+    ]
+    
+    # Check if any pattern matches
+    for pattern in equivalent_patterns:
+        if re.search(pattern, query_lower):
+            return True
+    
+    return False
+
+def extract_equivalent_product_brands(query):
+    """Extract which brands the user wants to compare with using OpenAI"""
+    
+    prompt = f"""
+From the query below, extract which product brands the user wants to find equivalents for.
+
+Query: "{query}"
+
+Look for brand names like: Nanuk, SKB, Pelican, Storm, Apache, Seahorse, etc.
+
+Return JSON format:
+{{"brands": ["brand1", "brand2", ...]}}
+
+If no specific brands mentioned, return common case brands:
+{{"brands": ["Nanuk", "SKB"]}}
+
+Examples:
+- "What is the Nanuk and SKB equivalent" -> {{"brands": ["Nanuk", "SKB"]}}
+- "What Storm case has same dimensions" -> {{"brands": ["Storm"]}}
+- "Any equivalent case" -> {{"brands": ["Nanuk", "SKB"]}}
+"""
+    
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-3.5-turbo", 
+            messages=[{"role": "user", "content": prompt}], 
+            temperature=0, 
+            max_tokens=200
+        )
+        result = eval(response.choices[0].message.content.strip())
+        return result.get("brands", ["Nanuk", "SKB"])
+    except:
+        return ["Nanuk", "SKB"]  # Default fallback
+    
+
+def extract_interior_dimensions(product_data):
+    """Extract interior dimensions from product data"""
+    
+    # Check if dimensions are in the product data
+    if "dimensions" in product_data and product_data["dimensions"] != "N/A":
+        return product_data["dimensions"]
+    
+    # Try to extract from product info using metafields or description
+    full_product_info = product_data.get("full_product_info", {})
+    
+    # Check metafields for dimensions
+    metafields = full_product_info.get("metafields", {}).get("edges", [])
+    for metafield_edge in metafields:
+        metafield = metafield_edge.get("node", {})
+        key = metafield.get("key", "").lower()
+        if "interior" in key and "dimension" in key:
+            return metafield.get("value", "information unavailable")
+    
+    # Try to extract from title or variant title
+    title = product_data.get("title", "")
+    variant_title = product_data.get("variant", {}).get("title", "")
+    all_text = f"{title} {variant_title}".lower()
+    
+    # Look for dimension patterns like "12x8x6" or similar
+    dimension_pattern = r'(\d+\.?\d*)\s*[x×]\s*(\d+\.?\d*)\s*[x×]\s*(\d+\.?\d*)'
+    match = re.search(dimension_pattern, all_text)
+    
+    if match:
+        return f"{match.group(1)} x {match.group(2)} x {match.group(3)}"
+    
+    return "information unavailable"
+
+def search_products_by_brand_and_dimensions(brands, target_dimensions):
+    """Search for products from specific brands that match target dimensions"""
+    
+    results = {}
+    
+    for brand in brands:
+        # Search for products from this brand
+        brand_query = f"""
+        {{
+          products(first: 50, query: "vendor:{brand} OR title:*{brand}* OR tag:{brand}") {{
+            edges {{
+              node {{
+                id
+                title
+                handle
+                vendor
+                variants(first: 5) {{
+                  edges {{
+                    node {{
+                      id
+                      sku
+                      title
+                      price
+                    }}
+                  }}
+                }}
+                metafields(first: 10) {{
+                  edges {{
+                    node {{
+                      namespace
+                      key
+                      value
+                    }}
+                  }}
+                }}
+              }}
+            }}
+          }}
+        }}
+        """
+        
+        try:
+            response = requests.post(
+                f"https://{SHOPIFY_STORE_URL}/admin/api/2023-07/graphql.json",
+                headers=headers,
+                json={"query": brand_query}
+            )
+            result = response.json()
+            products = result.get("data", {}).get("products", {}).get("edges", [])
+            
+            # Find best match using OpenAI
+            if products:
+                best_match = find_best_dimensional_match(products, target_dimensions, brand)
+                if best_match:
+                    results[brand] = best_match
+            
+        except Exception as e:
+            print(f"Error searching {brand} products: {e}")
+            results[brand] = None
+    
+    return results
+
+def find_best_dimensional_match(products, target_dimensions, brand):
+    """Use OpenAI to find the best dimensional match"""
+    
+    # Prepare product list for comparison
+    product_info = []
+    for product_edge in products[:20]:  # Limit to first 20 for processing
+        product = product_edge["node"]
+        variants = product.get("variants", {}).get("edges", [])
+        sku = variants[0]["node"]["sku"] if variants else "N/A"
+        
+        product_info.append({
+            "title": product["title"],
+            "sku": sku,
+            "vendor": product.get("vendor", ""),
+            "id": product["id"]
+        })
+    
+    product_list_str = "\n".join([
+        f"- {p['title']} (SKU: {p['sku']}, Vendor: {p['vendor']})" 
+        for p in product_info
+    ])
+    
+    prompt = f"""
+You need to find the {brand} product that best matches these interior dimensions: {target_dimensions}
+
+Available {brand} products:
+{product_list_str}
+
+Rules:
+1. Look for products that likely have interior dimensions matching or closest to: {target_dimensions}
+2. Consider product titles, SKUs, and model numbers that might indicate size
+3. If dimensions are like "12.1 x 8.4 x 6.2", look for products with similar numbers in title/SKU
+4. Return the ONE best match, not multiple
+
+Return JSON:
+{{"best_match_title": "exact title from list", "confidence": "high/medium/low", "reason": "why this matches"}}
+
+If no reasonable match found:
+{{"best_match_title": null, "confidence": "low", "reason": "no dimensional match found"}}
+"""
+    
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=300
+        )
+        result = eval(response.choices[0].message.content.strip())
+        
+        if result.get("best_match_title"):
+            # Find the matching product and return details
+            matched_product = next(
+                (p for p in product_info if p["title"] == result["best_match_title"]), 
+                None
+            )
+            if matched_product:
+                return {
+                    "title": matched_product["title"],
+                    "sku": matched_product["sku"],
+                    "confidence": result.get("confidence", "medium"),
+                    "reason": result.get("reason", "dimensional match")
+                }
+        
+        return None
+        
+    except Exception as e:
+        print(f"Error in dimensional matching: {e}")
+        return None
 
 
 # NEW: Store product in memory
@@ -411,7 +634,7 @@ Query: "{query}"
 Examples:
 - "Which products have status 'Draft' and are categorized as 'Uncategorized'?" 
   -> status_value: "DRAFT", category_value: "Uncategorized"
-- "How many active wine products?"
+- "How many active products?"
   -> status_value: "ACTIVE", category_value: "wine"
 - "List all draft products"
   -> status_value: "DRAFT", category_value: ""
@@ -1821,9 +2044,7 @@ def handle_user_input_with_pelican_support(user_input):
         r'how many product',
         r'total products',
         r'count.*products',
-        r'count.*product',
         r'number.*products',
-        r'number.*product',
         r'products.*count',
         r'products.*total',
         r'product.*total',
@@ -1872,6 +2093,37 @@ def handle_user_input_with_pelican_support(user_input):
         if is_new_product_request(user_input):
             # Clear memory and proceed with new product
             clear_product_memory()
+
+
+        elif is_equivalent_comparison_query(user_input):
+            current_data = st.session_state.current_product_data
+            current_title = st.session_state.current_product_memory
+            
+            # Extract interior dimensions of current product
+            current_dimensions = extract_interior_dimensions(current_data)
+            
+            if current_dimensions == "information unavailable":
+                return f"I cannot find the interior dimensions for the current product '{current_title}' to make a comparison. Interior dimension information is unavailable."
+            
+            # Extract which brands user wants to compare with
+            target_brands = extract_equivalent_product_brands(user_input)
+            
+            # Search for equivalent products
+            equivalent_results = search_products_by_brand_and_dimensions(target_brands, current_dimensions)
+            
+            # Format response
+            response_parts = [f"Based on the interior dimensions ({current_dimensions}) of '{current_title}', here are the closest equivalents:"]
+            
+            for brand in target_brands:
+                if brand in equivalent_results and equivalent_results[brand]:
+                    match = equivalent_results[brand]
+                    response_parts.append(f"\n**{brand}**: {match['title']} (SKU: {match['sku']}) - {match['confidence']} confidence match")
+                else:
+                    response_parts.append(f"\n**{brand}**: No equivalent found or interior dimension data unavailable")
+            
+            return "\n".join(response_parts)
+
+
         elif is_asking_about_current_product(user_input):
             # User is asking for more details about the current product
             requested_info = extract_current_product_info_request(user_input)
